@@ -1,1 +1,1 @@
-# NumberPlace
+# NumberPlace Solver
