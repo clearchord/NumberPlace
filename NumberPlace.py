@@ -1,36 +1,43 @@
+from os import spawnl
 import sys
 import copy
+import random
 from itertools import product
+from pathlib import Path
 from typing import List, Tuple, Set
+
+SIZE = 9
+BSIZE = 3
+UNFIXED = -1
 
 class Cell:
     def __init__(self, row: int, column: int):
         # 0 <= row, column < 9
         self.row = row
         self.column = column
-        # if fixed, 0 <= number < 9, otherwise -1
-        self.number = -1
+        # if fixed, 0 <= number < 9, otherwise UNFIXED
+        self.number = UNFIXED
         self.rest_row = None
         self.rest_column = None
         self.rest_block = None
 
+    def is_fixed(self):
+        return UNFIXED < self.number
+
     def get_candidates(self) -> List[int]:
         candidates = []
-        if self.number < 0:
+        if not self.is_fixed():
             numbers_in_common = self.rest_row & self.rest_column & self.rest_block
             candidates = list(numbers_in_common)
         return candidates
 
-    def determinable(self) -> Tuple[bool, int]:
-        result = (False, -1)
-        if self.number < 0:
+    def is_fixable(self) -> Tuple[bool, int]:
+        result = (False, UNFIXED)
+        if not self.is_fixed():
             candidates = self.get_candidates()
             if len(candidates) == 1:
                 result = (True, candidates[0])
         return result
-
-SIZE = 9
-BSIZE = 3
 
 class Board:
     def __init__(self):
@@ -56,7 +63,7 @@ class Board:
 
     def show(self, from_one = False):
         print('   ', ' '.join([str(i+1) if from_one else str(i) for i in range(SIZE)]))
-        print('   ', ' '.join(['-' for i in range(SIZE)]))
+        print('   ', '-'.join(['-' for i in range(SIZE)]))
         for row in range(SIZE):
             numbers = []
             for cell in self.cells[row]:
@@ -110,7 +117,7 @@ class Board:
                 number = rest.pop()
                 #print(f'row {row} fixed, {number}')
                 for c in range(SIZE):
-                    if self.cells[row][c].number == -1:
+                    if not self.cells[row][c].is_fixed():
                         self.fix(row, c, number)
                         break
 
@@ -121,7 +128,7 @@ class Board:
                 number = rest.pop()
                 #print(f'column {column} fixed, {number}')
                 for r in range(SIZE):
-                    if self.cells[r][column].number == -1:
+                    if not self.cells[r][column].is_fixed():
                         self.fix(r, column, number)
                         break
 
@@ -130,20 +137,19 @@ class Board:
             if len(rest) == 1:
                 changed = True
                 number = rest.pop()
-                brow_base = (row // BSIZE) * BSIZE
-                bcolumn_base = (column // BSIZE) * BSIZE
+                brow_base = brow * BSIZE
+                bcolumn_base = bcolumn * BSIZE
                 #print(f'block {brow}, {bcolumn} fixed, {number}')
                 for r, c in product(range(BSIZE), repeat=2):
-                    if self.cells[brow_base + r][bcolumn_base + c].number == -1:
+                    if not self.cells[brow_base + r][bcolumn_base + c].is_fixed():
                         self.fix(brow_base + r, bcolumn_base + c, number)
                         break
 
         for row, column in product(range(SIZE), repeat=2):
             cell = self.cells[row][column]
-            if cell.number == -1:
-                numbers_in_common = cell.rest_row & cell.rest_column & cell.rest_block
-                if len(numbers_in_common) == 1:
-                    number = numbers_in_common.pop()
+            if not cell.is_fixed():
+                fixable, number = cell.is_fixable()
+                if fixable:
                     #print(f'intersection {row}, {column} ({row // BSIZE}, {column // BSIZE}) fixed, {number}')
                     self.fix(row, column, number)
                     changed = True
@@ -159,7 +165,6 @@ class Board:
     def initialize(self, problem):
         for row, column, number in problem:
             self.fix(row, column, number)
-        self.satulate()
 
     def find_splittable(self) -> Tuple[int, int, List[int]]:
         splittable = None
@@ -173,31 +178,69 @@ class Board:
     def add_split_history(self, row: int, column: int, number: int):
         self.split_history.append((row, column, number))
 
-    def is_successful(self) -> bool:
+    def is_solved(self) -> bool:
         successful = True
         for row, column in product(range(SIZE), repeat=2):
-            if self.cells[row][column].number == -1:
+            if not self.cells[row][column].is_fixed():
                 successful = False
                 break
         return successful
 
+    def generate(self, sprawl_ratio):
+        # assumption: no cell is fixed
+        for row, column in product(range(SIZE), repeat=2):
+            cell = self.cells[row][column]
+            if not cell.is_fixed():
+                candidates = cell.get_candidates()
+                if len(candidates) == 0:
+                    continue
+                elif len(candidates) == 1:
+                    self.fix(row, column, candidates[0])
+                    self.satulate()
+                else:
+                    index = random.randrange(0, len(candidates))
+                    self.fix(row, column, candidates[index])
+                    self.satulate()
+
+        count = int(SIZE * SIZE * sprawl_ratio)
+        while 0 < count:
+            row = random.randrange(0, SIZE)
+            column = random.randrange(0, SIZE)
+            cell = self.cells[row][column]
+            if cell.is_fixed():
+                cell.number = UNFIXED
+                count -= 1
+
+    def save_as_problem(self, path_problem: str):
+        path = Path(path_problem)
+        if not path.parent.exists():
+            path.parent.mkdir()
+        with open(path, 'w', encoding='utf-8') as file:
+            for row in range(SIZE):
+                line = list(map(lambda c: str(c.number + 1), self.cells[row]))
+                file.write(''.join(line) + '\n')
+
 def load_problem(path_problem: str) -> List[Tuple[int, int, int]]:
-    determined = []
+    given = []
     with open(path_problem, 'r', encoding='utf-8') as file:
         lines = file.readlines()
     for row in range(SIZE):
+        line = lines[row]
         for column in range(SIZE):
-            number = int(lines[row][column])
+            number = int(line[column])
             if 0 < number:
-                determined.append((row, column, number - 1))
-    return determined
+                given.append((row, column, number - 1))
+    return given
 
-def main(path_problem):
+def solve(path_problem):
     finished_boards = set()
     board = Board()
     problem = load_problem(path_problem)
     board.initialize(problem)
-    if board.is_successful():
+    print('-- Problem\n')
+    board.show(from_one=True)
+    board.satulate()
+    if board.is_solved():
         finished_boards.add(board)
     else:
         current_boards = [board]
@@ -212,17 +255,36 @@ def main(path_problem):
                     cloned_board.satulate()
                     current_boards.append(cloned_board)
             else:
-                if current_board.is_successful():
+                if current_board.is_solved():
                     #current_board.show()
                     finished_boards.add(current_board)
 
-    print('-- Solutions')
+    print('-- Solutions\n')
     for board in finished_boards:
         board.show(from_one=True)
     print(f'# of solutions: {len(finished_boards)}')
 
+def generate(path_problem: str, sprawl_ratio: float):
+    board = Board()
+    board.generate(sprawl_ratio)
+    board.save_as_problem(path_problem)
+
+def usage():
+    print('Usage:')
+    print('\tpython NumberPlace.py solve <path to problem>')
+    print('\tpython NumberPlace.py generate <path to problem> <sprawl ratio>')
+
 if __name__ == '__main__':
-    path_problem = 'problems/problem150.txt'
+    path_problem = 'problems/problem149.txt'
     if 1 < len(sys.argv):
-        path_problem = sys.argv[1]
-    main(path_problem)
+        command = sys.argv[1]
+        path_problem = sys.argv[2]
+        if command == 'solve':
+            solve(path_problem)
+        elif command == 'generate':
+            sprawl_ratio = float(sys.argv[3])
+            generate(path_problem, sprawl_ratio)
+        else:
+            usage()
+    else:
+        usage()
