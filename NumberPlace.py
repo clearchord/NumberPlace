@@ -178,7 +178,7 @@ class Board:
     def add_split_history(self, row: int, column: int, number: int):
         self.split_history.append((row, column, number))
 
-    def is_solved(self) -> bool:
+    def is_fixed(self) -> bool:
         successful = True
         for row, column in product(range(SIZE), repeat=2):
             if not self.cells[row][column].is_fixed():
@@ -186,21 +186,64 @@ class Board:
                 break
         return successful
 
+    def is_solved(self) -> bool:
+        successful = True
+        if successful:
+            for row in range(SIZE):
+                numbers = set()
+                for column in range(SIZE):
+                    numbers.add(self.cells[row][column].number)
+                if len(numbers) != SIZE:
+                    successful = False
+                    #print(f'wrong row {row}')
+                    break
+
+        if successful:
+            for column in range(SIZE):
+                numbers = set()
+                for row in range(SIZE):
+                    numbers.add(self.cells[row][column].number)
+                if len(numbers) != SIZE:
+                    successful = False
+                    #print(f'wrong column {column}')
+                    break
+        
+        if successful:
+            for brow, bcolumn in product(range(BSIZE), repeat=2):
+                numbers = set()
+                for r, c in product(range(SIZE // BSIZE), repeat=2):
+                    numbers.add(self.cells[brow * BSIZE + r][bcolumn * BSIZE + c].number)
+                if len(numbers) != SIZE:
+                    successful = False
+                    #print(f'wrong block {row} {column}')
+                    break
+
+        return successful
+
+    def clear(self):
+        self.__init__()
+
     def generate(self, sprawl_ratio):
         # assumption: no cell is fixed
-        for row, column in product(range(SIZE), repeat=2):
-            cell = self.cells[row][column]
-            if not cell.is_fixed():
-                candidates = cell.get_candidates()
-                if len(candidates) == 0:
-                    continue
-                elif len(candidates) == 1:
-                    self.fix(row, column, candidates[0])
-                    self.satulate()
-                else:
-                    index = random.randrange(0, len(candidates))
-                    self.fix(row, column, candidates[index])
-                    self.satulate()
+        solved = False
+        while not solved:
+            self.clear()
+            for row, column in product(range(SIZE), repeat=2):
+                cell = self.cells[row][column]
+                if not cell.is_fixed():
+                    candidates = cell.get_candidates()
+                    if len(candidates) == 0:
+                        continue
+                    elif len(candidates) == 1:
+                        self.fix(row, column, candidates[0])
+                        self.satulate()
+                    else:
+                        index = random.randrange(0, len(candidates))
+                        self.fix(row, column, candidates[index])
+                        self.satulate()
+            solved = self.is_solved()
+            #print(self.is_solved())
+            #self.show()
 
         count = int(SIZE * SIZE * sprawl_ratio)
         while 0 < count:
@@ -240,24 +283,25 @@ def solve(path_problem):
     print('-- Problem\n')
     board.show(from_one=True)
     board.satulate()
-    if board.is_solved():
+    if board.is_fixed():
         finished_boards.add(board)
     else:
         current_boards = [board]
         while 0 < len(current_boards):
             current_board = current_boards.pop()
             row, column, candidates = current_board.find_splittable()
-            if 0 <= row:
+            if candidates is None:
+                if current_board.is_fixed():
+                    #current_board.show()
+                    if current_board.is_solved():
+                        finished_boards.add(current_board)
+            else:
                 for candidate in candidates:
                     cloned_board = copy.deepcopy(current_board)
                     cloned_board.fix(row, column, candidate)
                     cloned_board.add_split_history(row, column, candidate)
                     cloned_board.satulate()
                     current_boards.append(cloned_board)
-            else:
-                if current_board.is_solved():
-                    #current_board.show()
-                    finished_boards.add(current_board)
 
     print('-- Solutions\n')
     for board in finished_boards:
